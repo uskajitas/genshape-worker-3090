@@ -19,9 +19,14 @@ transformers>=4.40
 accelerate>=0.30
 safetensors>=0.4
 
+# Tensor / config (hy3dgen imports these directly)
+einops>=0.7
+omegaconf>=2.3
+
 # Geometry / mesh
 trimesh>=4.0
 pymeshlab>=2023.12
+pygltflib>=1.16
 xatlas>=0.0.9
 numpy>=1.26
 scipy>=1.11
@@ -37,3 +42,9 @@ huggingface-hub[cli]>=0.20
 
 # Progress
 tqdm>=4.66
+
+# Build tools (needed if/when Hunyuan3D-2's custom_rasterizer or
+# mesh_inpaint_processor C++/CUDA extensions get compiled — see the
+# Hunyuan3D-2 repo's own setup for those)
+ninja>=1.11
+pybind11>=2.11
