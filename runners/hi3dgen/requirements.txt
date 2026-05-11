@@ -39,3 +39,14 @@ scikit-image
 opencv-python
 einops
 safetensors
+
+# Background removal (must install AFTER numpy==1.26.4 is pinned, otherwise
+# rembg pulls in numpy 2.x which breaks torch 2.4). Use [cpu] to get
+# onnxruntime without cuDNN 9 requirement.
+# After installing, pre-download the u2net model (176 MB) so it's available
+# when the first job runs (it would otherwise try to download mid-job):
+#   python -c "import rembg; rembg.new_session()"
+# or download directly:
+#   Invoke-WebRequest https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx `
+#       -OutFile "$env:USERPROFILE\.u2net\u2net.onnx"
+rembg[cpu]>=2.0
