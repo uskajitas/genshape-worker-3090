@@ -13,3 +13,5 @@ app/build/
 
 # Worker runtime logs
 logs/
+
+tray-worker.log
