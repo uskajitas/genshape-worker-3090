@@ -146,8 +146,6 @@ app.on('ready', () => {
   tray.on('click', () => createWindow());
 
   // Start the worker
-  const models = (process.env.WORKER_MODELS || 'hunyuan3d,triposr,sf3d,hi3dgen')
-    .split(',').map(s => s.trim()).filter(Boolean);
   worker = new Worker({
     databaseUrl: process.env.DATABASE_URL,
     r2Endpoint: process.env.R2_ENDPOINT || 'https://edad30fa0fe66f50971087c6b0df0f28.r2.cloudflarestorage.com',
@@ -156,9 +154,11 @@ app.on('ready', () => {
     r2Bucket: process.env.R2_BUCKET || 'genshape3d',
     r2PublicUrl: process.env.R2_PUBLIC_URL || '',
     pollInterval: parseInt(process.env.POLL_INTERVAL || '10000', 10),
-    models,
+    // Models this worker can run. The 1080 has only Hunyuan3D; the 3090
+    // declares 'hunyuan3d,triposr,sf3d,hi3dgen'. worker.js's poll filters
+    // pending by this list — without it, .env's WORKER_MODELS was ignored.
+    models: (process.env.WORKER_MODELS || 'hunyuan3d').split(',').map(s => s.trim()).filter(Boolean),
   });
-  console.log(`[main] Worker configured for models: ${models.join(', ')}`);
 
   worker.on('jobReceived', (job) => {
     showNotification('Job Received', `Job ${job.id.slice(0, 8)}... is queued`);
