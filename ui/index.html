@@ -253,21 +253,17 @@
   </div>
 
   <div class="stats">
-    <div class="stat-box">
-      <div class="num" id="pendingCount">0</div>
-      <div class="lbl">Pending</div>
-    </div>
     <div class="stat-box active">
       <div class="num" id="processingCount">0</div>
-      <div class="lbl">Processing</div>
+      <div class="lbl">Active</div>
     </div>
     <div class="stat-box">
       <div class="num" id="completedCount">0</div>
-      <div class="lbl">Done</div>
+      <div class="lbl">Done (this session)</div>
     </div>
     <div class="stat-box">
       <div class="num" id="failedCount">0</div>
-      <div class="lbl">Failed</div>
+      <div class="lbl">Failed (this session)</div>
     </div>
   </div>
 
@@ -284,35 +280,20 @@
     </div>
   </div>
 
-  <!-- All processing jobs (including from other workers) -->
-  <div class="section">
-    <div class="section-title">Processing Jobs</div>
-    <ul class="job-list" id="processingList"></ul>
-    <div class="empty" id="processingEmpty">No jobs currently processing</div>
-  </div>
+  <!-- LOCAL ONLY: jobs this 3090 worker has processed since startup.
+       No global queue, no other workers' jobs, no historical DB rows.
+       For the system-wide view, use the genshape3d.com dashboard. -->
 
   <div class="section">
-    <div class="section-title">Pending Jobs</div>
-    <ul class="job-list" id="pendingList"></ul>
-    <div class="empty" id="pendingEmpty">No pending jobs</div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Recent Completed</div>
+    <div class="section-title">Recent Completed (this worker)</div>
     <ul class="job-list" id="completedList"></ul>
-    <div class="empty" id="completedEmpty">No completed jobs yet</div>
+    <div class="empty" id="completedEmpty">No completed jobs this session</div>
   </div>
 
   <div class="section">
-    <div class="section-title">Cancelled</div>
-    <ul class="job-list" id="cancelledList"></ul>
-    <div class="empty" id="cancelledEmpty">No cancelled jobs</div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">Recent Failed</div>
+    <div class="section-title">Recent Failed (this worker)</div>
     <ul class="job-list" id="failedList"></ul>
-    <div class="empty" id="failedEmpty">No failed jobs</div>
+    <div class="empty" id="failedEmpty">No failed jobs this session</div>
   </div>
 
   <script>
@@ -401,9 +382,8 @@
         document.getElementById('gpuPower').textContent = state.gpu.power_w  != null ? Math.round(state.gpu.power_w) + ' W' : '—';
       }
 
-      // Stats
-      document.getElementById('pendingCount').textContent = (state.pendingJobs || []).length;
-      document.getElementById('processingCount').textContent = (state.processingJobs || []).length;
+      // Stats — local only.
+      document.getElementById('processingCount').textContent = state.isProcessing ? 1 : 0;
       document.getElementById('completedCount').textContent = (state.completedJobs || []).length;
       document.getElementById('failedCount').textContent = (state.failedJobs || []).length;
 
@@ -436,20 +416,9 @@
         section.style.display = 'none';
       }
 
-      // Processing jobs (from DB)
-      renderList('processingList', 'processingEmpty', state.processingJobs, 'processing');
-
-      // Pending
-      renderList('pendingList', 'pendingEmpty', state.pendingJobs, 'pending');
-
-      // Completed
-      renderList('completedList', 'completedEmpty', state.completedJobs, 'done');
-
-      // Cancelled
-      renderList('cancelledList', 'cancelledEmpty', state.cancelledJobs || [], 'cancelled');
-
-      // Failed
-      renderList('failedList', 'failedEmpty', state.failedJobs, 'failed');
+      // Completed + Failed are LOCAL ring buffers (this worker only).
+      renderList('completedList', 'completedEmpty', state.completedJobs || [], 'done');
+      renderList('failedList', 'failedEmpty', state.failedJobs || [], 'failed');
     }
 
     function renderList(listId, emptyId, jobs, statusClass) {
