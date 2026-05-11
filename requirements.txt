@@ -3,5 +3,5 @@
 requests>=2.31
 boto3>=1.34
 python-dotenv>=1.0
-# GPU monitoring (VRAM, utilization, temperature) for the tkinter UI.
+# GPU monitoring (VRAM, utilization, temperature) for the worker UI.
 nvidia-ml-py>=12.0

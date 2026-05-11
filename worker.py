@@ -279,9 +279,11 @@ def run_job(job: dict) -> None:
         with _active_lock:
             _active_jobs.pop(job_id, None)
 
+        cj_started = _state["current_job"]["started"] if _state["current_job"] else time.time()
         if jp.cancelled:
             report_complete(job_id, "cancelled")
             _state["jobs_failed"] += 1
+            _record_completion(job_id, model, "cancelled", cj_started, "user cancelled")
             _state["current_job"] = None
             _state["status"] = "idle"
             return
@@ -289,6 +291,7 @@ def run_job(job: dict) -> None:
             print(f"[worker] runner failed: rc={rc} err={runner_error} filename={result_filename}", file=sys.stderr)
             report_complete(job_id, "failed")
             _state["jobs_failed"] += 1
+            _record_completion(job_id, model, "failed", cj_started, runner_error or f"exit={rc}")
             _state["current_job"] = None
             _state["status"] = "idle"
             return
@@ -298,6 +301,7 @@ def run_job(job: dict) -> None:
             print(f"[worker] runner reported done but file missing: {local}", file=sys.stderr)
             report_complete(job_id, "failed")
             _state["jobs_failed"] += 1
+            _record_completion(job_id, model, "failed", cj_started, "result file missing")
             _state["current_job"] = None
             _state["status"] = "idle"
             return
@@ -315,6 +319,7 @@ def run_job(job: dict) -> None:
             print(f"[worker] R2 upload failed: {e}", file=sys.stderr)
             report_complete(job_id, "failed")
             _state["jobs_failed"] += 1
+            _record_completion(job_id, model, "failed", cj_started, f"R2 upload: {e}")
             _state["current_job"] = None
             _state["status"] = "idle"
             return
@@ -322,6 +327,7 @@ def run_job(job: dict) -> None:
         report_complete(job_id, "done", url)
         print(f"[worker] job {job_id} done → {url}")
         _state["jobs_done"] += 1
+        _record_completion(job_id, model, "done", cj_started)
         _state["current_job"] = None
         _state["status"] = "idle"
 
@@ -377,11 +383,192 @@ def claim_loop_with_state() -> None:
     _state["status"] = "idle"
     claim_loop()
 
-# ─── GUI (Tkinter window, mirrors 1080's Electron UI) ───────────────────────
-# Worker logic runs in background threads; tk owns the main thread (required
-# on Windows). Closing the X button minimizes to taskbar, doesn't quit —
-# only File > Quit (or the "Quit worker" button) actually exits.
+# ── Recent-jobs ring buffers (for the UI's history lists) ───────────────────
+# We don't have direct DB access from the worker (by design — the worker
+# talks to the server via HTTP). So the history shown in the UI is what
+# THIS worker has handled, kept in memory. Server restarts → history clears.
+_history_lock = threading.Lock()
+_completed_jobs: list[dict] = []  # most recent first
+_failed_jobs: list[dict] = []
+_HISTORY_MAX = 20
 
+def _record_completion(job_id: str, model: str, status: str, started: float, error: str = "") -> None:
+    rec = {
+        "id": job_id,
+        "model": model,
+        "status": status,
+        "startedAt": started,
+        "completedAt": time.time(),
+        "error": error,
+    }
+    with _history_lock:
+        target = _completed_jobs if status == "done" else _failed_jobs
+        target.insert(0, rec)
+        del target[_HISTORY_MAX:]
+
+# ─── UI: local HTTP server + browser ────────────────────────────────────────
+# Same architecture as the 1080's Electron app, but lighter: serve the same
+# index.html (with the API calls swapped from window.api → fetch), open the
+# user's default browser at it. No GUI library deps needed.
+
+_nvml = None
+_nvml_handle = None
+_nvml_name = None
+
+def _init_nvml() -> None:
+    global _nvml, _nvml_handle, _nvml_name
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        _nvml = pynvml
+        _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        n = pynvml.nvmlDeviceGetName(_nvml_handle)
+        _nvml_name = n.decode("utf-8", errors="replace") if isinstance(n, bytes) else n
+    except Exception as e:
+        print(f"[ui] NVML unavailable: {e}", file=sys.stderr)
+
+def _gpu_snapshot() -> dict:
+    if not _nvml or not _nvml_handle:
+        return {"name": "(GPU stats unavailable)"}
+    try:
+        mem = _nvml.nvmlDeviceGetMemoryInfo(_nvml_handle)
+        util = _nvml.nvmlDeviceGetUtilizationRates(_nvml_handle)
+        temp = _nvml.nvmlDeviceGetTemperature(_nvml_handle, _nvml.NVML_TEMPERATURE_GPU)
+        try: power_w = _nvml.nvmlDeviceGetPowerUsage(_nvml_handle) / 1000.0
+        except Exception: power_w = None
+        return {
+            "name": _nvml_name,
+            "vram_used_gb": mem.used / 1e9,
+            "vram_total_gb": mem.total / 1e9,
+            "vram_pct": (mem.used / mem.total) * 100 if mem.total else 0,
+            "util_pct": util.gpu,
+            "temp_c": temp,
+            "power_w": power_w,
+        }
+    except Exception as e:
+        return {"name": "(GPU read error)", "_error": str(e)}
+
+def _build_state_json() -> bytes:
+    cj = _state["current_job"]
+    cj_payload = None
+    if cj:
+        cj_payload = {
+            "id": cj["id"],
+            "model": cj["model"],
+            "startedAt": _epoch_iso(cj["started"]),
+            "progress": {"pct": cj.get("pct"), "phase": cj.get("phase"), "detail": cj.get("phase")},
+        }
+    with _history_lock:
+        completed = [
+            {**j, "startedAt": _epoch_iso(j["startedAt"]), "completedAt": _epoch_iso(j["completedAt"])}
+            for j in _completed_jobs
+        ]
+        failed = [
+            {**j, "startedAt": _epoch_iso(j["startedAt"]), "completedAt": _epoch_iso(j["completedAt"])}
+            for j in _failed_jobs if j.get("status") == "failed"
+        ]
+        cancelled = [
+            {**j, "startedAt": _epoch_iso(j["startedAt"]), "completedAt": _epoch_iso(j["completedAt"])}
+            for j in _failed_jobs if j.get("status") == "cancelled"
+        ]
+    payload = {
+        "isProcessing": cj is not None,
+        "currentJob": cj_payload,
+        # We don't see other workers' jobs from here (we'd need DB or a server
+        # endpoint). Show this worker's current as the only "processing" entry.
+        "processingJobs": [{"id": cj["id"], "status": "processing",
+                            "startedAt": _epoch_iso(cj["started"]),
+                            "progressPct": cj.get("pct", 0),
+                            "progressPhase": cj.get("phase", "")}] if cj else [],
+        "pendingJobs": [],   # the server queue isn't visible from the worker
+        "completedJobs": completed,
+        "failedJobs": failed,
+        "cancelledJobs": cancelled,
+        "gpu": _gpu_snapshot(),
+        "worker": {
+            "id": WORKER_ID,
+            "models": WORKER_MODELS,
+            "capacity": WORKER_CAPACITY,
+            "uptime_s": int(time.time() - _state["started_at"]),
+            "jobs_done": _state["jobs_done"],
+            "jobs_failed": _state["jobs_failed"],
+        },
+    }
+    return json.dumps(payload).encode("utf-8")
+
+def _epoch_iso(t: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+
+def _make_handler():
+    """Build a BaseHTTPRequestHandler bound to the index.html on disk."""
+    from http.server import BaseHTTPRequestHandler
+    index_path = REPO_ROOT / "ui" / "index.html"
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):  # silence default access log
+            pass
+
+        def _send(self, code: int, ctype: str, body: bytes):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/" or self.path == "/index.html":
+                try:
+                    body = index_path.read_bytes()
+                    return self._send(200, "text/html; charset=utf-8", body)
+                except FileNotFoundError:
+                    return self._send(500, "text/plain", b"index.html missing")
+            if self.path == "/state":
+                return self._send(200, "application/json", _build_state_json())
+            return self._send(404, "text/plain", b"not found")
+
+        def do_POST(self):
+            if self.path.startswith("/cancel/"):
+                jid = self.path[len("/cancel/"):]
+                with _active_lock:
+                    jp = _active_jobs.get(jid)
+                if jp:
+                    jp.cancel()
+                    return self._send(200, "application/json", b'{"ok":true}')
+                return self._send(404, "application/json", b'{"ok":false,"error":"not active here"}')
+            return self._send(404, "text/plain", b"not found")
+
+    return Handler
+
+def run_ui_server() -> None:
+    """Start the local HTTP UI on a free port, then open the default browser
+    to it. Blocks the main thread (serves forever)."""
+    import http.server
+    import socketserver
+    import webbrowser
+
+    port = int(os.environ.get("WORKER_UI_PORT", "8765"))
+    Handler = _make_handler()
+
+    # Bind to localhost only — never expose this to the network.
+    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler)
+    httpd.daemon_threads = True
+    print(f"[ui] HTTP server on http://127.0.0.1:{port}/")
+
+    # Open the browser tab once, in a background thread so it doesn't block
+    # the server. If WORKER_UI_NO_OPEN=1 in env, skip (useful for dev).
+    if os.environ.get("WORKER_UI_NO_OPEN") != "1":
+        def _open():
+            time.sleep(0.5)  # let the server come up
+            try:
+                webbrowser.open(f"http://127.0.0.1:{port}/")
+            except Exception as e:
+                print(f"[ui] couldn't open browser: {e}", file=sys.stderr)
+        threading.Thread(target=_open, daemon=True).start()
+
+    httpd.serve_forever()
+
+# ── (legacy: kept for reference) ────────────────────────────────────────────
 def _format_uptime(seconds: float) -> str:
     s = int(seconds)
     h, rem = divmod(s, 3600)
@@ -394,7 +581,7 @@ def _format_bytes(b: int) -> str:
     if b < 1024**3:     return f"{b/1024**2:.1f} MB"
     return f"{b/1024**3:.2f} GB"
 
-def run_gui() -> None:
+def run_gui_unused() -> None:
     import tkinter as tk
     from tkinter import ttk
     import webbrowser
@@ -580,15 +767,16 @@ def main() -> None:
     if not WORKER_MODELS:
         print("WORKER_MODELS env var is empty", file=sys.stderr)
         sys.exit(1)
+    _init_nvml()
     try:
         register()
     except Exception as e:
         print(f"[worker] register failed: {e}", file=sys.stderr)
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=claim_loop_with_state, daemon=True).start()
-    print(f"[worker] background threads started; entering GUI loop")
+    print(f"[worker] background threads started; serving UI on http://127.0.0.1:8765/")
     try:
-        run_gui()
+        run_ui_server()
     except KeyboardInterrupt:
         print("[worker] interrupted; cancelling active jobs")
         with _active_lock:
