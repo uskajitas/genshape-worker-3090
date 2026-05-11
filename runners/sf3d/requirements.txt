@@ -1,22 +1,31 @@
-# Stable Fast 3D runtime deps. SF3D needs gsplat + slangtorch which are
-# fiddly to install on Windows — recommend installing pre-built wheels if
-# the source build fails.
+# Stable Fast 3D runtime deps. SF3D is a research codebase (no PyPI
+# package); clone the repo first, then this requirements file pulls in
+# its own deps including the in-tree texture_baker / uv_unwrapper CUDA
+# extensions.
 #
 # Setup:
+#   git clone https://github.com/Stability-AI/stable-fast-3d.git \
+#       C:\projects\ai\sf3d\stable-fast-3d
 #   py -3.11 -m venv .venv
 #   .\.venv\Scripts\Activate.ps1
+#   # ⚠ from a Developer Command Prompt with v14.39 toolset
 #   pip install --index-url https://download.pytorch.org/whl/cu121 \
-#       torch==2.3.0 torchvision==0.18.0
+#       torch==2.5.1 torchvision==0.20.1
+#   # Patch torch's cuda.cmake — see ../../SETUP.md
 #   pip install -r requirements.txt
 
-# SF3D not on PyPI — install from GitHub.
-git+https://github.com/Stability-AI/stable-fast-3d.git@main#egg=sf3d
-
-# Required by sf3d
-gsplat>=1.0
-slangtorch
-trimesh>=4.0
-xatlas>=0.0.9
-Pillow>=10.0
-numpy>=1.26
-huggingface-hub[cli]>=0.20
+# SF3D's own pip-installable deps (mirrors stable-fast-3d/requirements.txt).
+# Pip 24+ refuses bare ./texture_baker/ relative paths in a requirements
+# file, so the two in-tree CUDA extensions are installed in a follow-up
+# `pip install` call (see SETUP.md and the bootstrap chain).
+einops==0.7.0
+jaxtyping==0.2.31
+omegaconf==2.3.0
+transformers==4.42.3
+open_clip_torch==2.24.0
+trimesh==4.4.1
+numpy==1.26.4
+huggingface-hub==0.23.4
+rembg[gpu]==2.0.57
+pynanoinstantmeshes==0.0.3
+gpytoolbox==0.2.0

@@ -151,6 +151,30 @@ torch wheel).
 pip install -r requirements.txt
 ```
 
+#### Step 4b: model-specific local CUDA extensions (SF3D only, so far)
+SF3D ships two C++/CUDA extensions inside its repo (`texture_baker/`,
+`uv_unwrapper/`). They have to be installed via explicit paths after the
+upstream deps, because:
+- Bare `./texture_baker/` lines in a requirements file are rejected by
+  pip 24+.
+- Their `setup.py` imports torch at build time, which means
+  `--no-build-isolation` is required.
+- `wheel` + `setuptools` must already be in the venv (no isolated build env
+  to bring them in).
+- These env vars MUST be set in the **PowerShell** scope before invoking
+  cmd, NOT inside the `cmd /c` chain — `set` inside cmd doesn't always
+  propagate to pip's build subprocess:
+  ```powershell
+  $env:TORCH_CUDA_ARCH_LIST = "8.6"   # 3090; adjust for other GPUs
+  $env:DISTUTILS_USE_SDK = "1"        # silences torch's vcvarsall warning
+  ```
+- pip is atomic per command: if you `pip install A B` and B fails, A is
+  rolled back too. Install **one at a time** when debugging:
+  ```powershell
+  pip install --no-build-isolation C:\projects\ai\sf3d\stable-fast-3d\texture_baker
+  pip install --no-build-isolation C:\projects\ai\sf3d\stable-fast-3d\uv_unwrapper
+  ```
+
 #### Step 5: pre-download model weights (gated — needs HF_TOKEN + license)
 See each runner's `run.py` top comment for the exact HF repo and
 `huggingface-cli download` command. You must accept each model's license

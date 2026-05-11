@@ -14,9 +14,16 @@ One-time bootstrap:
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
+
+# SF3D is not a pip package — its source repo must be cloned and added to
+# sys.path. Default clone target sits next to the weights so both can be
+# moved or backed up together.
+SF3D_REPO_DIR = Path(os.environ.get("SF3D_REPO_DIR", r"C:\projects\ai\sf3d\stable-fast-3d"))
+sys.path.insert(0, str(SF3D_REPO_DIR))
 
 def emit(**kw) -> None:
     sys.stdout.write(json.dumps(kw) + "\n")
