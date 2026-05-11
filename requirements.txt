@@ -3,3 +3,7 @@
 requests>=2.31
 boto3>=1.34
 python-dotenv>=1.0
+# System-tray icon (visibility for the user — same UX as the 1080's
+# Electron tray app, but without dragging in Electron).
+pystray>=0.19
+pillow>=10.0

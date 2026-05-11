@@ -25,11 +25,16 @@ $worker = Join-Path $repo "worker.py"
 "" | Out-File -FilePath $log -Append -Encoding utf8
 "=== worker started $(Get-Date -Format 's') ===" | Out-File -FilePath $log -Append -Encoding utf8
 
-# Run forever (worker.py has its own crash-tolerance and reconnect logic;
-# but if it does exit cleanly or crash hard, restart it after 5s so a
-# transient blip doesn't kill the whole worker until next reboot).
+# Run forever ON CRASH ONLY. Exit code 0 = user clicked "Quit worker" in
+# the tray menu; respect that and exit. Anything else = crash, restart
+# after 5s.
 while ($true) {
     & $python $worker *>&1 | Out-File -FilePath $log -Append -Encoding utf8
-    "=== worker exited $(Get-Date -Format 's'), restarting in 5s ===" | Out-File -FilePath $log -Append -Encoding utf8
+    $code = $LASTEXITCODE
+    "=== worker exited code=$code at $(Get-Date -Format 's') ===" | Out-File -FilePath $log -Append -Encoding utf8
+    if ($code -eq 0) {
+        "=== clean shutdown via tray quit; not restarting ===" | Out-File -FilePath $log -Append -Encoding utf8
+        break
+    }
     Start-Sleep -Seconds 5
 }
