@@ -88,16 +88,77 @@ copy .env.example .env
 ```
 
 ### 2. Per-runner setup
-For each model under `runners/`:
+
+Each runner has its own venv with its own torch wheel. Same recipe applies
+to all four; only the model-specific deps differ.
+
+#### Step 1: build environment
+The MSVC v14.44 toolset that ships with VS BuildTools 17.10+ is **rejected
+by CUDA 12.1** (yvals_core.h has a `static_assert` requiring CUDA ≥ 12.4).
+Install the older v14.39 toolset side-by-side:
+1. Open **Visual Studio Installer** → **Modify** Build Tools 2022.
+2. **Individual components** tab → search `v14.39`.
+3. Tick **MSVC v143 - VS 2022 C++ x64/x86 build tools (v14.39-17.9)**.
+4. Modify, wait ~10 min.
+
+Always run `pip install` for runner deps from a developer command prompt
+with the v14.39 toolset selected:
+```cmd
+"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64 -vcvars_ver=14.39
+```
+
+CUDA 12.1's "Visual Studio Integration" sub-component must also be
+installed (or its 4 files manually copied to
+`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations\`).
+Without it CMake errors with "No CUDA toolset found."
+
+#### Step 2: create venv + install deps
 ```powershell
 cd C:\projects\genshape-worker-3090\runners\<model>
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-# Then pre-download weights to C:\projects\ai\<model>\ — see each runner's
-# run.py top comment for the exact HF repo + huggingface-cli command.
-deactivate
+# ⚠ Pin torch 2.5.1+cu121 (NOT older — see Step 3 for why).
+pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1
 ```
+
+#### Step 3: NVTX3 patch (REQUIRED for any C++/CUDA extension build)
+PyTorch's `cuda.cmake` looks for NVTX3 headers at a path that's empty in
+the wheel. If found, it uses header-only NVTX3 — perfect. If not, it
+falls back to the legacy `CUDA::nvToolsExt` link target which doesn't
+exist on CUDA 12.x. Every `pip install` of a package with a CUDA
+extension (torchmcubes, gsplat, custom torch ops, etc.) hits this.
+
+We bootstrapped the headers once at
+`C:\projects\ai\nvtx_redist\extracted\nvidia\nvtx\include\` (extracted
+from the `nvidia-nvtx-cu12` PyPI wheel). Patch each runner's torch CMake
+config to look there too:
+
+Edit `runners\<model>\.venv\Lib\site-packages\torch\share\cmake\Caffe2\public\cuda.cmake`,
+find this line:
+```cmake
+find_path(nvtx3_dir NAMES nvtx3 PATHS "${PROJECT_SOURCE_DIR}/third_party/NVTX/c/include" NO_DEFAULT_PATH)
+```
+and change it to:
+```cmake
+find_path(nvtx3_dir NAMES nvtx3 PATHS "${PROJECT_SOURCE_DIR}/third_party/NVTX/c/include" "C:/projects/ai/nvtx_redist/extracted/nvidia/nvtx/include" NO_DEFAULT_PATH)
+```
+
+The patch must be re-applied if torch is reinstalled (it lives inside the
+torch wheel).
+
+#### Step 4: install runner-specific deps
+```powershell
+pip install -r requirements.txt
+```
+
+#### Step 5: pre-download model weights (gated — needs HF_TOKEN + license)
+See each runner's `run.py` top comment for the exact HF repo and
+`huggingface-cli download` command. You must accept each model's license
+once on its HF page while logged in:
+- <https://huggingface.co/stabilityai/TripoSR>
+- <https://huggingface.co/tencent/Hunyuan3D-2>
+- <https://huggingface.co/stabilityai/stable-fast-3d>
+- <https://huggingface.co/Stable-X/Hi3DGen>
 
 ### 3. Run the worker
 ```powershell

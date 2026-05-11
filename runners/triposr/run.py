@@ -13,9 +13,16 @@ below). To bootstrap once:
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
+
+# TripoSR is not a pip package — its source repo must be cloned and added
+# to sys.path. Default clone target sits next to the weights so both can be
+# moved or backed up together.
+TRIPOSR_DIR = Path(os.environ.get("TRIPOSR_DIR", r"C:\projects\ai\triposr\TripoSR"))
+sys.path.insert(0, str(TRIPOSR_DIR))
 
 # ─── JSONL event emitter ─────────────────────────────────────────────────────
 def emit(**kw) -> None:

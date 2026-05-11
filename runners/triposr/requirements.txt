@@ -1,27 +1,44 @@
-# TripoSR runtime deps. Install order matters: torch first (with CUDA index),
-# then the TripoSR repo from GitHub (no PyPI release), then rembg.
+# TripoSR runtime deps. TripoSR itself is a research codebase (no PyPI
+# package, no setup.py) — clone it and let run.py sys.path it instead.
 #
-# Setup (run from this directory after `py -3.11 -m venv .venv` and activation):
+# torch is PINNED to 2.5.1+cu121: torch 2.3.x links the legacy nvToolsExt
+# .lib (gone from CUDA 12.x), torch 2.5+ uses NVTX3 (header-only). Stick
+# with 2.5.1 unless you've also done the cuda.cmake NVTX3 path patch
+# (see SETUP.md → "Per-runner venv setup" → "Step 3: NVTX3 patch").
+#
+# Setup (full guide in SETUP.md):
+#   py -3.11 -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   # ⚠ run from a Developer Command Prompt with v14.39 toolset:
+#   #   "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\
+#   #    VC\Auxiliary\Build\vcvarsall.bat" x64 -vcvars_ver=14.39
 #   pip install --index-url https://download.pytorch.org/whl/cu121 \
-#       torch==2.3.0 torchvision==0.18.0
+#       torch==2.5.1 torchvision==0.20.1
+#   # Patch torch's cuda.cmake — see SETUP.md
 #   pip install -r requirements.txt
-#
-# Then download weights:
+#   git clone https://github.com/VAST-AI-Research/TripoSR.git \
+#       C:\projects\ai\triposr\TripoSR
+#   # Weights (gated; needs HF_TOKEN + license accepted on HF):
 #   huggingface-cli download stabilityai/TripoSR \
 #       config.yaml model.ckpt --local-dir C:\projects\ai\triposr
+#
+# torchmcubes is a CUDA extension that builds from source — needs Visual
+# Studio Build Tools (C++ workload) + CUDA Toolkit 12.1 + MSVC v14.39
+# toolset (NOT v14.44 — CUDA 12.1 rejects it).
 
-# TripoSR is not on PyPI — install from GitHub.
-git+https://github.com/VAST-AI-Research/TripoSR.git@main#egg=tsr
-
-# Image preprocessing + background removal
+omegaconf==2.3.0
+einops==0.7.0
+transformers==4.35.0
+trimesh==4.0.5
+git+https://github.com/tatsy/torchmcubes.git
+imageio[ffmpeg]
+xatlas==0.0.9
+moderngl==5.10.0
 Pillow>=10.0
 rembg>=2.0
 onnxruntime-gpu>=1.17
 
-# Mesh export
-trimesh>=4.0
-xatlas>=0.0.9
-numpy>=1.26
-
-# Hugging Face download CLI (one-time weight bootstrap)
-huggingface-hub[cli]>=0.20
+# huggingface_hub comes in transitively via transformers 4.35.0 (which pins
+# it to <0.18 via tokenizers 0.14.x). Don't pin it here — newer HF
+# versions break tokenizers' import. Weight download uses
+# huggingface_hub.snapshot_download() from Python, no CLI needed.
