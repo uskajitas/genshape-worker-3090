@@ -181,6 +181,26 @@
     .badge.failed { background: #3a1b1b; color: #f44336; }
     .badge.cancelled { background: #3a3a1b; color: #aaa; }
 
+    /* Model tag — shown on every job so the UI is consistent across
+       1080 + 3090 and the user can see at-a-glance which model a job
+       was/is running. */
+    .model-tag {
+      font-size: 10px;
+      background: #0f3460;
+      color: #00d2ff;
+      padding: 2px 7px;
+      border-radius: 3px;
+      margin-left: 6px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      vertical-align: middle;
+    }
+    .model-tag.hunyuan3d { background: #1a3a5c; color: #00d2ff; }
+    .model-tag.triposr   { background: #3a1a5c; color: #c87cff; }
+    .model-tag.sf3d      { background: #5c3a1a; color: #ffae66; }
+    .model-tag.hi3dgen   { background: #1a5c3a; color: #66ffae; }
+
     .btn-cancel {
       font-size: 10px;
       padding: 3px 10px;
@@ -370,10 +390,11 @@
         ? `<button class="btn-cancel" onclick="cancelJob('${job.id}')">Cancel</button>`
         : '';
 
+      const model = (job.model || 'hunyuan3d').toLowerCase();
       return `
         <li class="job-item">
           <div>
-            <div class="job-id">${shortId(job.id)}</div>
+            <div class="job-id">${shortId(job.id)}<span class="model-tag ${model}">${model}</span></div>
             ${timeInfo}
           </div>
           <div class="job-right">
@@ -398,7 +419,9 @@
       const section = document.getElementById('currentSection');
       if (state.currentJob) {
         section.style.display = '';
-        document.getElementById('currentJobId').textContent = state.currentJob.id;
+        const cjModel = (state.currentJob.model || 'hunyuan3d').toLowerCase();
+        document.getElementById('currentJobId').innerHTML =
+          `${state.currentJob.id}<span class="model-tag ${cjModel}">${cjModel}</span>`;
         const prog = state.currentJob.progress;
         const bar = document.querySelector('.progress-bar');
         const detailEl = document.getElementById('currentJobDetail');

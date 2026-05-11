@@ -8,12 +8,17 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 
-// 3090 fork of the 1080's Worker. Same Postgres-polling architecture,
-// same UI, same patterns — but all queries are filtered by WORKER_ID
-// so the UI only shows what THIS machine has processed. The DB is
-// the same centralized Postgres on the 1080 (i7) — single source of
-// truth — but our view is local to this machine's identity.
-const WORKER_ID = (process.env.WORKER_ID || 'win-3090').trim();
+// Worker — same code runs on both the 1080 (i7) and the 3090.
+// Behaviour is configured per-machine via .env:
+//   WORKER_ID:     unique id stamped on jobs this machine claims
+//                  ('i7-1080' on the 1080, 'win-3090' on the 3090).
+//   WORKER_MODELS: comma-separated models this machine can run; the
+//                  pending-jobs query filters by this so a machine
+//                  never claims a job it can't actually run.
+// Postgres on the i7 is the single source of truth. Each app's UI
+// filters by its WORKER_ID so users only see what THIS machine has
+// touched.
+const WORKER_ID = (process.env.WORKER_ID || 'i7-1080').trim();
 
 class Worker extends EventEmitter {
   constructor(config) {
