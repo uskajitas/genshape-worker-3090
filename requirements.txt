@@ -3,5 +3,9 @@
 requests>=2.31
 boto3>=1.34
 python-dotenv>=1.0
-# GPU monitoring (VRAM, utilization, temperature) for the worker UI.
+# GPU monitoring (VRAM, utilization, temperature) shown in the tray tooltip.
 nvidia-ml-py>=12.0
+# System-tray icon (the 1080 worker is an Electron tray app; this is the
+# Python equivalent without dragging in Electron).
+pystray>=0.19
+pillow>=10.0

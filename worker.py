@@ -763,6 +763,130 @@ def run_gui_unused() -> None:
     refresh()
     root.mainloop()
 
+# ─── System tray icon (primary UI, like the 1080) ──────────────────────────
+# pystray must own the main thread on Windows. Worker logic runs on
+# background threads; the tray polls _state + GPU stats every second to
+# refresh tooltip and menu. The HTTP UI server (run_ui_server) also runs
+# in the background — accessible via the "Open monitor window" tray menu
+# item or directly at http://127.0.0.1:8765/. The browser is NOT opened
+# automatically; only via the menu click.
+
+def _make_icon_image(color: tuple[int, int, int]):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    # Filled circle with a thick black outline so it's visible on any taskbar bg.
+    d.ellipse((4, 4, 60, 60), fill=color, outline=(0, 0, 0, 255), width=3)
+    return img
+
+def run_tray() -> None:
+    import pystray
+    import webbrowser
+
+    GREEN = (76, 175, 80)
+    ORANGE = (255, 152, 0)
+    GREY = (158, 158, 158)
+    RED = (244, 67, 54)
+
+    icon_idle = _make_icon_image(GREEN)
+    icon_busy = _make_icon_image(ORANGE)
+    icon_starting = _make_icon_image(GREY)
+
+    def status_line() -> str:
+        s = _state["status"]
+        cj = _state["current_job"]
+        if s == "working" and cj:
+            elapsed = int(time.time() - cj["started"])
+            return f"Working: {cj['model']} · {cj['id'][:8]} · {elapsed}s"
+        if s == "idle":
+            return "Idle — waiting for jobs"
+        if s == "starting":
+            return "Starting..."
+        return s.capitalize()
+
+    def vram_line() -> str:
+        gpu = _gpu_snapshot()
+        if "vram_total_gb" not in gpu:
+            return "VRAM: (unavailable)"
+        return f"VRAM: {gpu['vram_used_gb']:.1f} / {gpu['vram_total_gb']:.0f} GB ({gpu['vram_pct']:.0f}%)"
+
+    def stats_line() -> str:
+        up = int(time.time() - _state["started_at"])
+        h, rem = divmod(up, 3600); m, _s = divmod(rem, 60)
+        ups = f"{h}h{m:02d}m" if h else f"{m}m{_s:02d}s"
+        return f"Done: {_state['jobs_done']}  Failed: {_state['jobs_failed']}  Up: {ups}"
+
+    def gpu_extra_line() -> str:
+        gpu = _gpu_snapshot()
+        if "util_pct" not in gpu:
+            return ""
+        return f"Util {gpu['util_pct']}%  ·  Temp {gpu['temp_c']}°C"
+
+    def on_open_monitor(_icon, _item):
+        webbrowser.open("http://127.0.0.1:8765/")
+    def on_open_dashboard(_icon, _item):
+        webbrowser.open("https://genshape3d.com/dashboard")
+    def on_open_log(_icon, _item):
+        log_path = REPO_ROOT / "logs" / "worker.log"
+        if log_path.exists():
+            os.startfile(str(log_path))  # type: ignore[attr-defined]
+    def on_open_folder(_icon, _item):
+        os.startfile(str(REPO_ROOT))  # type: ignore[attr-defined]
+    def on_quit(icon, _item):
+        with _active_lock:
+            for jp in list(_active_jobs.values()):
+                jp.cancel()
+        icon.stop()
+        os._exit(0)
+
+    icon = pystray.Icon(
+        "genshape-worker-3090",
+        icon_idle,
+        f"GenShape3D Worker ({WORKER_ID})",
+        menu=pystray.Menu(
+            pystray.MenuItem(lambda _: status_line(), None, enabled=False),
+            pystray.MenuItem(lambda _: vram_line(), None, enabled=False),
+            pystray.MenuItem(lambda _: gpu_extra_line(), None, enabled=False),
+            pystray.MenuItem(lambda _: stats_line(), None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(f"Models: {', '.join(WORKER_MODELS)}", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Open monitor window", on_open_monitor, default=True),
+            pystray.MenuItem("Open dashboard", on_open_dashboard),
+            pystray.MenuItem("Open log file", on_open_log),
+            pystray.MenuItem("Open worker folder", on_open_folder),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit worker", on_quit),
+        ),
+    )
+
+    # Background updater: refreshes tooltip + icon color every second.
+    def updater():
+        last_status = None
+        while True:
+            time.sleep(1)
+            try:
+                icon.title = (
+                    f"GenShape3D Worker ({WORKER_ID})\n"
+                    f"{status_line()}\n"
+                    f"{vram_line()}\n"
+                    f"{stats_line()}"
+                )
+                s = _state["status"]
+                if s != last_status:
+                    icon.icon = (
+                        icon_busy   if s == "working"
+                        else icon_idle if s == "idle"
+                        else icon_starting
+                    )
+                    last_status = s
+            except Exception as e:
+                print(f"[tray] updater error: {e}", file=sys.stderr)
+
+    threading.Thread(target=updater, daemon=True).start()
+    print("[tray] tray icon registered; double-click for monitor window")
+    icon.run()  # blocks main thread until on_quit
+
 def main() -> None:
     if not WORKER_MODELS:
         print("WORKER_MODELS env var is empty", file=sys.stderr)
@@ -774,9 +898,12 @@ def main() -> None:
         print(f"[worker] register failed: {e}", file=sys.stderr)
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=claim_loop_with_state, daemon=True).start()
-    print(f"[worker] background threads started; serving UI on http://127.0.0.1:8765/")
+    # HTTP server for the optional monitor window — runs in background, no auto-open.
+    os.environ.setdefault("WORKER_UI_NO_OPEN", "1")
+    threading.Thread(target=run_ui_server, daemon=True).start()
+    print(f"[worker] background threads started; entering tray loop")
     try:
-        run_ui_server()
+        run_tray()
     except KeyboardInterrupt:
         print("[worker] interrupted; cancelling active jobs")
         with _active_lock:
