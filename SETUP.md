@@ -151,6 +151,41 @@ torch wheel).
 pip install -r requirements.txt
 ```
 
+#### Step 4a: Hi3DGen-specific gotchas (Stable3DGen)
+Hi3DGen's repo was renamed to **Stable3DGen**; the importable Python
+package is still called `hi3dgen`. Two differences from the other runners:
+
+1. **torch is pinned to 2.4.0+cu121, NOT 2.5.1.** Reason: `xformers==0.0.27.post2`
+   (an upstream pin) is built against torch 2.4. Trying to install it on
+   torch 2.5 fails with an ABI mismatch.
+2. **The cuda.cmake NVTX patch is different from Step 3.** torch 2.4's
+   `cuda.cmake` has a stricter check at line 69:
+   ```cmake
+   if(NOT TARGET CUDA::nvToolsExt)
+     message(FATAL_ERROR "Failed to find nvToolsExt")
+   endif()
+   ```
+   That fataling stops the build before our Step 3 patch (which targets
+   line 173) is even reached. Replace lines 69-71 with:
+   ```cmake
+   if(NOT TARGET CUDA::nvToolsExt)
+     add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+     target_include_directories(CUDA::nvToolsExt INTERFACE
+       "C:/projects/ai/nvtx_redist/extracted/nvidia/nvtx/include")
+   endif()
+   ```
+   This creates an INTERFACE-imported target backed by the NVTX3 headers,
+   satisfying both the early check and the later `set_property(... CUDA::nvToolsExt)`
+   linkage at line ~185 (which works because INTERFACE libraries propagate
+   include dirs without needing an actual .lib).
+3. **`spconv-cu121` upstream pin is 2.3.6 but it's been yanked from PyPI** —
+   use `2.3.8` (the closest still-available release).
+
+Stable3DGen also depends on `triton`, which has no Windows wheel. The
+runner's requirements.txt deliberately omits it; if the inference path
+ever requires it at runtime, we'll need a `triton-windows` fork or a
+different solution. Smoke-test before assuming it works without.
+
 #### Step 4b: model-specific local CUDA extensions (SF3D only, so far)
 SF3D ships two C++/CUDA extensions inside its repo (`texture_baker/`,
 `uv_unwrapper/`). They have to be installed via explicit paths after the

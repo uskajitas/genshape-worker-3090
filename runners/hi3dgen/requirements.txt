@@ -1,21 +1,41 @@
-# Hi3DGen runtime deps. Source repo carries its own requirements file —
-# pip install from that repo first, then layer this on top.
+# Hi3DGen — the project was renamed to Stable3DGen; the package is still
+# called `hi3dgen` inside the new repo. Source code: github.com/Stable-X/Stable3DGen.
+# Weights live in two HF repos: Stable-X/trellis-normal-v0-1 (3D model)
+# and Stable-X/yoso-normal-v1-8-1 (normal estimator).
 #
-# Setup:
+# torch is PINNED to 2.4.0+cu121 (NOT 2.5.1 — xformers 0.0.27.post2 is built
+# against 2.4 and won't load on 2.5).
+#
+# Setup (full guide in ../../SETUP.md):
+#   git clone --recursive https://github.com/Stable-X/Stable3DGen.git \
+#       C:\projects\ai\hi3dgen\Stable3DGen
 #   py -3.11 -m venv .venv
 #   .\.venv\Scripts\Activate.ps1
+#   # ⚠ from Developer Command Prompt with v14.39 toolset:
 #   pip install --index-url https://download.pytorch.org/whl/cu121 \
-#       torch==2.3.0 torchvision==0.18.0
-#   git clone https://github.com/Stable-X/Hi3DGen.git C:\projects\ai\hi3dgen\Hi3DGen
-#   pip install -r C:\projects\ai\hi3dgen\Hi3DGen\requirements.txt
+#       torch==2.4.0 torchvision==0.19.0
+#   # Patch torch's cuda.cmake — see SETUP.md
 #   pip install -r requirements.txt
-#   huggingface-cli download Stable-X/Hi3DGen --local-dir C:\projects\ai\hi3dgen\weights
 
-diffusers>=0.27
-transformers>=4.40
-accelerate>=0.30
-safetensors>=0.4
-trimesh>=4.0
-Pillow>=10.0
-numpy>=1.26
-huggingface-hub[cli]>=0.20
+# CUDA-version-locked deps (must match torch 2.4.0 + cu121).
+# spconv-cu121: 2.3.6 was the upstream pin but was yanked from PyPI; 2.3.8
+# is the closest still-available release.
+spconv-cu121==2.3.8
+xformers==0.0.27.post2
+
+# Stable3DGen's own deps (mirror Stable3DGen/requirements.txt minus gradio
+# which is demo-only, and triton which has no Windows wheel).
+diffusers>=0.28.0
+accelerate
+kornia==0.8.0
+timm==0.6.7
+transformers==4.46.3
+pillow
+tqdm
+scipy
+trimesh
+numpy==1.26.4
+scikit-image
+opencv-python
+einops
+safetensors
