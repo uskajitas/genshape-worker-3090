@@ -1,0 +1,39 @@
+# Hunyuan3D-2 runtime deps. Mirrors what the i7 box has installed (see
+# genshape3d_nvidia for reference). Setup once, reuse for all Hunyuan3D jobs.
+#
+# Setup:
+#   py -3.11 -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   pip install --index-url https://download.pytorch.org/whl/cu121 \
+#       torch==2.3.0 torchvision==0.18.0
+#   pip install -r requirements.txt
+#
+# Then clone the hy3dgen repo into HUNYUAN3D_DIR (default
+# C:\projects\ai\hunyuan3d\Hunyuan3D-2) — that repo carries the model code
+# (not packaged on PyPI). Weights download automatically on first run via
+# huggingface_hub.
+
+# Hunyuan3D ships custom CUDA ops; rely on the official repo's setup, then:
+diffusers>=0.27
+transformers>=4.40
+accelerate>=0.30
+safetensors>=0.4
+
+# Geometry / mesh
+trimesh>=4.0
+pymeshlab>=2023.12
+xatlas>=0.0.9
+numpy>=1.26
+scipy>=1.11
+
+# Image processing
+Pillow>=10.0
+opencv-python>=4.9
+rembg>=2.0
+onnxruntime-gpu>=1.17
+
+# Hugging Face
+huggingface-hub[cli]>=0.20
+
+# Progress
+tqdm>=4.66

@@ -1,0 +1,21 @@
+# Hi3DGen runtime deps. Source repo carries its own requirements file —
+# pip install from that repo first, then layer this on top.
+#
+# Setup:
+#   py -3.11 -m venv .venv
+#   .\.venv\Scripts\Activate.ps1
+#   pip install --index-url https://download.pytorch.org/whl/cu121 \
+#       torch==2.3.0 torchvision==0.18.0
+#   git clone https://github.com/Stable-X/Hi3DGen.git C:\projects\ai\hi3dgen\Hi3DGen
+#   pip install -r C:\projects\ai\hi3dgen\Hi3DGen\requirements.txt
+#   pip install -r requirements.txt
+#   huggingface-cli download Stable-X/Hi3DGen --local-dir C:\projects\ai\hi3dgen\weights
+
+diffusers>=0.27
+transformers>=4.40
+accelerate>=0.30
+safetensors>=0.4
+trimesh>=4.0
+Pillow>=10.0
+numpy>=1.26
+huggingface-hub[cli]>=0.20

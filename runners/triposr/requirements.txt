@@ -1,0 +1,27 @@
+# TripoSR runtime deps. Install order matters: torch first (with CUDA index),
+# then the TripoSR repo from GitHub (no PyPI release), then rembg.
+#
+# Setup (run from this directory after `py -3.11 -m venv .venv` and activation):
+#   pip install --index-url https://download.pytorch.org/whl/cu121 \
+#       torch==2.3.0 torchvision==0.18.0
+#   pip install -r requirements.txt
+#
+# Then download weights:
+#   huggingface-cli download stabilityai/TripoSR \
+#       config.yaml model.ckpt --local-dir C:\projects\ai\triposr
+
+# TripoSR is not on PyPI — install from GitHub.
+git+https://github.com/VAST-AI-Research/TripoSR.git@main#egg=tsr
+
+# Image preprocessing + background removal
+Pillow>=10.0
+rembg>=2.0
+onnxruntime-gpu>=1.17
+
+# Mesh export
+trimesh>=4.0
+xatlas>=0.0.9
+numpy>=1.26
+
+# Hugging Face download CLI (one-time weight bootstrap)
+huggingface-hub[cli]>=0.20
