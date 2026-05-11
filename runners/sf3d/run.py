@@ -1,15 +1,8 @@
 """
-Stable Fast 3D (SF3D) runner — image-to-3d via stabilityai/stable-fast-3d.
+Stable Fast 3D runner — image-to-3d via stabilityai/stable-fast-3d.
 
-Honours the worker→runner contract from ../../SETUP.md.
-
-SF3D is fast (~1-2s on a 3090 after model load) and produces UV-mapped
-textures natively. Different code path from Hunyuan3D / TripoSR.
-
-One-time bootstrap:
-    huggingface-cli download stabilityai/stable-fast-3d \\
-        config.yaml model.safetensors \\
-        --local-dir C:\\projects\\ai\\sf3d
+CLI + stdout protocol matches genshape3d_nvidia/generate.py so the 1080's
+Electron worker.js can spawn this just like it spawns generate.py.
 """
 
 import argparse
@@ -19,75 +12,61 @@ import sys
 import time
 from pathlib import Path
 
-# SF3D is not a pip package — its source repo must be cloned and added to
-# sys.path. Default clone target sits next to the weights so both can be
-# moved or backed up together.
 SF3D_REPO_DIR = Path(os.environ.get("SF3D_REPO_DIR", r"C:\projects\ai\sf3d\stable-fast-3d"))
 sys.path.insert(0, str(SF3D_REPO_DIR))
 
-def emit(**kw) -> None:
-    sys.stdout.write(json.dumps(kw) + "\n")
-    sys.stdout.flush()
-
-def progress(pct: int, phase: str, step: int | None = None, total: int | None = None) -> None:
-    payload = {"type": "progress", "pct": int(pct), "phase": phase}
-    if step is not None: payload["step"] = step
-    if total is not None: payload["total"] = total
-    emit(**payload)
-
-def log(msg: str) -> None:
-    emit(type="log", msg=msg)
-
 WEIGHTS_DIR = Path(r"C:\projects\ai\sf3d")
+
+
+def emit_progress(pct, phase, step=0, total=0, detail=""):
+    obj = {"pct": min(int(pct), 100), "phase": phase, "step": int(step), "total": int(total), "detail": detail}
+    print(f"PROGRESS:{json.dumps(obj)}", flush=True)
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--job-json", required=True)
-    ap.add_argument("--image-path", required=True)
-    ap.add_argument("--output-dir", required=True)
+    ap.add_argument("--image", required=True)
+    ap.add_argument("--output", required=True)
+    ap.add_argument("--steps", type=int, default=5)
+    ap.add_argument("--guidance-scale", type=float, default=5.0)
+    ap.add_argument("--octree-resolution", type=int, default=256)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--num-chunks", type=int, default=8000)
+    ap.add_argument("--target-face-count", type=int, default=30000)
+    ap.add_argument("--export-format", default="glb")
+    ap.add_argument("--remove-bg", action="store_true")
+    ap.add_argument("--do-texture", action="store_true")
     args = ap.parse_args()
 
-    job = json.loads(Path(args.job_json).read_text(encoding="utf-8"))
-    image_path = Path(args.image_path)
-    out_dir = Path(args.output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / "output.glb"
-
-    progress(2, "loading")
+    t0_total = time.time()
+    emit_progress(0, "starting", detail="Preparing...")
 
     try:
         import torch
         from PIL import Image
         from sf3d.system import SF3D
     except ImportError as e:
-        emit(type="failed", error=f"sf3d import failed: {e}")
+        print(f"RESULT:{json.dumps({'status':'error','error':f'import: {e}'})}", flush=True)
         return 1
 
     if not torch.cuda.is_available():
-        emit(type="failed", error="CUDA not available")
+        print(f"RESULT:{json.dumps({'status':'error','error':'CUDA not available'})}", flush=True)
         return 1
 
-    progress(8, "loading")
-    log(f"loading SF3D from {WEIGHTS_DIR}")
+    emit_progress(5, "loading", detail="Loading SF3D...")
     t0 = time.time()
-    model = SF3D.from_pretrained(
-        str(WEIGHTS_DIR),
-        config_name="config.yaml",
-        weight_name="model.safetensors",
-    )
+    model = SF3D.from_pretrained(str(WEIGHTS_DIR), config_name="config.yaml", weight_name="model.safetensors")
     model.eval().cuda()
-    log(f"model loaded in {time.time() - t0:.1f}s")
+    print(f"[sf3d] model loaded in {time.time() - t0:.1f}s", flush=True)
+    emit_progress(25, "analyzing", detail="Analyzing image...")
 
-    progress(25, "preprocessing")
-    image = Image.open(image_path).convert("RGBA")
+    image = Image.open(args.image).convert("RGBA")
 
-    # Map our textureRes string to SF3D's bake_resolution int.
-    tex_res = (job.get("textureRes") or "1K").upper()
-    bake_res = {"1K": 1024, "2K": 2048, "4K": 4096}.get(tex_res, 1024)
-    log(f"bake_resolution={bake_res}")
+    # Map texture-res hint from job: detail level or explicit.
+    bake_res = 1024  # 1K default — fast. Worker may override later.
 
-    progress(40, "generating")
-    t0 = time.time()
+    emit_progress(40, "generating", step=1, total=1, detail="Generating mesh + texture...")
+    t1 = time.time()
     with torch.no_grad():
         mesh, _texture, _glb_buf = model.run_image(
             image,
@@ -96,14 +75,19 @@ def main() -> int:
             vertex_count=-1,
             return_points=False,
         )
-    log(f"generated in {time.time() - t0:.1f}s")
+    print(f"[sf3d] generated in {time.time() - t1:.1f}s", flush=True)
 
-    progress(92, "exporting")
-    mesh.export(str(out_file))
-    log(f"wrote {out_file}")
+    emit_progress(92, "exporting", detail="Exporting...")
+    out_path = args.output
+    if not out_path.lower().endswith(f".{args.export_format.lower()}"):
+        out_path = os.path.splitext(out_path)[0] + f".{args.export_format.lower()}"
+    mesh.export(out_path)
+    size = os.path.getsize(out_path)
+    emit_progress(100, "done", detail="Generation complete!")
 
-    emit(type="done", filename=out_file.name)
+    print(f"RESULT:{json.dumps({'status':'success','output_path':out_path,'vertices':len(mesh.vertices),'faces':len(mesh.faces),'file_size':size,'total_time':round(time.time()-t0_total,1)})}", flush=True)
     return 0
+
 
 if __name__ == "__main__":
     try:
@@ -111,5 +95,5 @@ if __name__ == "__main__":
     except Exception as e:
         import traceback
         traceback.print_exc(file=sys.stderr)
-        emit(type="failed", error=f"{type(e).__name__}: {e}")
+        print(f"RESULT:{json.dumps({'status':'error','error':f'{type(e).__name__}: {e}'})}", flush=True)
         sys.exit(1)

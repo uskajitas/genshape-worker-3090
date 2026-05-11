@@ -1,0 +1,20 @@
+{
+  "name": "genshape3d-nvidia-worker",
+  "version": "1.0.0",
+  "description": "GenShape3D AI Worker - System Tray App",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1026.0",
+    "axios": "^1.14.0",
+    "dotenv": "^17.4.1",
+    "electron": "^41.2.0",
+    "pg": "^8.20.0"
+  }
+}

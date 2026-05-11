@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GenShape3D Worker</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      overflow-y: auto;
+      height: 100vh;
+    }
+
+    .header {
+      background: #16213e;
+      padding: 16px 20px;
+      border-bottom: 1px solid #0f3460;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #00d2ff;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #4caf50;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.idle { background: #4caf50; }
+    .status-dot.busy { background: #ff9800; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .section {
+      padding: 12px 20px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #888;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .current-job {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 8px;
+    }
+
+    .current-job .label {
+      font-size: 11px;
+      color: #ff9800;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .current-job .id {
+      font-family: 'Consolas', monospace;
+      font-size: 13px;
+      color: #00d2ff;
+    }
+
+    .current-job .times {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #aaa;
+    }
+
+    .current-job .times span {
+      color: #ff9800;
+      font-weight: 500;
+    }
+
+    .progress-detail {
+      font-size: 12px;
+      color: #00d2ff;
+      font-weight: 500;
+      display: block;
+      margin-top: 6px;
+    }
+
+    .current-job .progress {
+      margin-top: 8px;
+      height: 4px;
+      background: #0f3460;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .current-job .progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #00d2ff, #ff9800);
+      width: 60%;
+      animation: progress-anim 2s ease-in-out infinite;
+    }
+
+    @keyframes progress-anim {
+      0% { width: 20%; }
+      50% { width: 80%; }
+      100% { width: 20%; }
+    }
+
+    .job-list {
+      list-style: none;
+    }
+
+    .job-item {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .job-item .job-id {
+      font-family: 'Consolas', monospace;
+      font-size: 12px;
+      color: #ccc;
+    }
+
+    .job-item .job-time {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+
+    .job-item .job-duration {
+      font-size: 10px;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    .job-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .badge.pending { background: #1a237e; color: #7c8dff; }
+    .badge.processing { background: #4a2800; color: #ff9800; }
+    .badge.done { background: #1b3a1b; color: #4caf50; }
+    .badge.failed { background: #3a1b1b; color: #f44336; }
+    .badge.cancelled { background: #3a3a1b; color: #aaa; }
+
+    .btn-cancel {
+      font-size: 10px;
+      padding: 3px 10px;
+      border-radius: 4px;
+      border: 1px solid #f44336;
+      background: transparent;
+      color: #f44336;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+
+    .btn-cancel:hover {
+      background: #f44336;
+      color: #fff;
+    }
+
+    .btn-cancel:active {
+      transform: scale(0.95);
+    }
+
+    .current-job .btn-cancel {
+      margin-top: 10px;
+      padding: 5px 16px;
+      font-size: 11px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 20px;
+      color: #555;
+      font-size: 13px;
+    }
+
+    .stats {
+      display: flex;
+      gap: 12px;
+      padding: 8px 20px 4px;
+    }
+
+    .stat-box {
+      flex: 1;
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+    }
+
+    .stat-box .num {
+      font-size: 22px;
+      font-weight: 700;
+      color: #00d2ff;
+    }
+
+    .stat-box .lbl {
+      font-size: 10px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-box.active .num { color: #ff9800; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="status-dot" id="statusDot"></div>
+    <h1>GenShape3D Worker</h1>
+  </div>
+
+  <div class="stats">
+    <div class="stat-box">
+      <div class="num" id="pendingCount">0</div>
+      <div class="lbl">Pending</div>
+    </div>
+    <div class="stat-box active">
+      <div class="num" id="processingCount">0</div>
+      <div class="lbl">Processing</div>
+    </div>
+    <div class="stat-box">
+      <div class="num" id="completedCount">0</div>
+      <div class="lbl">Done</div>
+    </div>
+    <div class="stat-box">
+      <div class="num" id="failedCount">0</div>
+      <div class="lbl">Failed</div>
+    </div>
+  </div>
+
+  <!-- Currently Processing (this worker) -->
+  <div class="section" id="currentSection" style="display:none">
+    <div class="section-title">This Worker - Active</div>
+    <div class="current-job">
+      <div class="label">Processing Now</div>
+      <div class="id" id="currentJobId"></div>
+      <div class="times" id="currentJobTimes"></div>
+      <div id="currentJobDetail"></div>
+      <div class="progress"><div class="progress-bar"></div></div>
+      <button class="btn-cancel" id="cancelCurrentBtn">Cancel Job</button>
+    </div>
+  </div>
+
+  <!-- All processing jobs (including from other workers) -->
+  <div class="section">
+    <div class="section-title">Processing Jobs</div>
+    <ul class="job-list" id="processingList"></ul>
+    <div class="empty" id="processingEmpty">No jobs currently processing</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Pending Jobs</div>
+    <ul class="job-list" id="pendingList"></ul>
+    <div class="empty" id="pendingEmpty">No pending jobs</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Recent Completed</div>
+    <ul class="job-list" id="completedList"></ul>
+    <div class="empty" id="completedEmpty">No completed jobs yet</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Cancelled</div>
+    <ul class="job-list" id="cancelledList"></ul>
+    <div class="empty" id="cancelledEmpty">No cancelled jobs</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Recent Failed</div>
+    <ul class="job-list" id="failedList"></ul>
+    <div class="empty" id="failedEmpty">No failed jobs</div>
+  </div>
+
+  <script>
+    function formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatDuration(startTs, endTs) {
+      if (!startTs) return '';
+      const start = new Date(startTs).getTime();
+      const end = endTs ? new Date(endTs).getTime() : Date.now();
+      const secs = Math.round((end - start) / 1000);
+      if (secs < 60) return `${secs}s`;
+      const mins = Math.floor(secs / 60);
+      const remSecs = secs % 60;
+      if (mins < 60) return `${mins}m ${remSecs}s`;
+      const hrs = Math.floor(mins / 60);
+      const remMins = mins % 60;
+      return `${hrs}h ${remMins}m`;
+    }
+
+    function shortId(id) {
+      return id ? id.slice(0, 8) + '...' : '';
+    }
+
+    async function cancelJob(jobId) {
+      if (!confirm(`Cancel job ${jobId.slice(0, 8)}...?`)) return;
+      await window.api.cancelJob(jobId);
+    }
+
+    function renderJobItem(job, statusClass) {
+      let timeInfo = '';
+      if (statusClass === 'processing') {
+        const phase = job.progressPhase || '';
+        const pct = job.progressPct || 0;
+        timeInfo = `<div class="job-time">Started: ${formatTime(job.startedAt)} &mdash; Elapsed: ${formatDuration(job.startedAt)}</div>
+                    <div class="job-duration" style="color:#00d2ff">${phase ? phase + ' &mdash; ' + pct + '%' : 'Starting...'}</div>
+                    <div style="height:3px;background:#0f3460;border-radius:2px;margin-top:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#00d2ff,#ff9800);transition:width 0.5s"></div></div>`;
+      } else if (statusClass === 'done') {
+        timeInfo = `<div class="job-time">Done: ${formatTime(job.completedAt)} &mdash; Took: ${formatDuration(job.startedAt, job.completedAt)}</div>
+                    <div class="job-duration" style="color:#4caf50">${job.progressPhase || 'Complete'}</div>`;
+      } else if (statusClass === 'cancelled') {
+        timeInfo = `<div class="job-time">Cancelled: ${formatTime(job.completedAt)}</div>`;
+      } else if (statusClass === 'failed') {
+        timeInfo = `<div class="job-time">Failed: ${formatTime(job.completedAt)}</div>
+                    <div class="job-duration">${job.error ? job.error.slice(0, 50) : ''}</div>`;
+      } else {
+        timeInfo = `<div class="job-time">Queued: ${formatTime(job.createdAt)}</div>`;
+      }
+
+      const canCancel = statusClass === 'pending' || statusClass === 'processing';
+      const cancelBtn = canCancel
+        ? `<button class="btn-cancel" onclick="cancelJob('${job.id}')">Cancel</button>`
+        : '';
+
+      return `
+        <li class="job-item">
+          <div>
+            <div class="job-id">${shortId(job.id)}</div>
+            ${timeInfo}
+          </div>
+          <div class="job-right">
+            <span class="badge ${statusClass}">${job.status || statusClass}</span>
+            ${cancelBtn}
+          </div>
+        </li>`;
+    }
+
+    function update(state) {
+      // Stats
+      document.getElementById('pendingCount').textContent = state.pendingJobs.length;
+      document.getElementById('processingCount').textContent = state.processingJobs.length;
+      document.getElementById('completedCount').textContent = state.completedJobs.length;
+      document.getElementById('failedCount').textContent = state.failedJobs.length;
+
+      // Status dot
+      const dot = document.getElementById('statusDot');
+      dot.className = state.isProcessing ? 'status-dot busy' : 'status-dot idle';
+
+      // Current job (this worker)
+      const section = document.getElementById('currentSection');
+      if (state.currentJob) {
+        section.style.display = '';
+        document.getElementById('currentJobId').textContent = state.currentJob.id;
+        const prog = state.currentJob.progress;
+        const bar = document.querySelector('.progress-bar');
+        const detailEl = document.getElementById('currentJobDetail');
+        if (prog && prog.pct > 0) {
+          bar.style.animation = 'none';
+          bar.style.width = prog.pct + '%';
+          bar.style.transition = 'width 0.5s ease';
+          detailEl.innerHTML = `<span class="progress-detail">${prog.detail || prog.phase} &mdash; ${prog.pct}%</span>`;
+        } else {
+          bar.style.animation = '';
+          bar.style.width = '';
+          detailEl.innerHTML = '<span class="progress-detail">Starting...</span>';
+        }
+        document.getElementById('currentJobTimes').innerHTML =
+          `Started: <span>${formatTime(state.currentJob.startedAt)}</span> &mdash; Elapsed: <span>${formatDuration(state.currentJob.startedAt)}</span>`;
+        document.getElementById('cancelCurrentBtn').onclick = () => cancelJob(state.currentJob.id);
+      } else {
+        section.style.display = 'none';
+      }
+
+      // Processing jobs (from DB)
+      renderList('processingList', 'processingEmpty', state.processingJobs, 'processing');
+
+      // Pending
+      renderList('pendingList', 'pendingEmpty', state.pendingJobs, 'pending');
+
+      // Completed
+      renderList('completedList', 'completedEmpty', state.completedJobs, 'done');
+
+      // Cancelled
+      renderList('cancelledList', 'cancelledEmpty', state.cancelledJobs || [], 'cancelled');
+
+      // Failed
+      renderList('failedList', 'failedEmpty', state.failedJobs, 'failed');
+    }
+
+    function renderList(listId, emptyId, jobs, statusClass) {
+      const list = document.getElementById(listId);
+      const empty = document.getElementById(emptyId);
+      if (jobs.length > 0) {
+        list.innerHTML = jobs.map(j => renderJobItem(j, statusClass)).join('');
+        empty.style.display = 'none';
+      } else {
+        list.innerHTML = '';
+        empty.style.display = '';
+      }
+    }
+
+    // Initial load
+    window.api.getState().then(update);
+
+    // Live updates from main process
+    window.api.onJobUpdate(update);
+
+    // Refresh elapsed timers every second when processing
+    setInterval(() => {
+      window.api.getState().then(update);
+    }, 1000);
+  </script>
+</body>
+</html>

@@ -4,3 +4,12 @@ runners/*/.venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Electron app (this machine's own, fork of 1080's genshape3d_nvidia)
+app/node_modules/
+app/.env
+app/dist/
+app/build/
+
+# Worker runtime logs
+logs/
