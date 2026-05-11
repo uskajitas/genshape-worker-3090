@@ -374,116 +374,207 @@ def claim_loop() -> None:
                 pass
 
 def claim_loop_with_state() -> None:
-    """Wraps claim_loop so we can flip _state.status to 'idle' before each
-    poll (so the tray shows 'idle' between jobs without the worker thread
-    needing to know about state)."""
     _state["status"] = "idle"
     claim_loop()
 
-# ─── Tray UI (pystray) ──────────────────────────────────────────────────────
-# Worker logic runs in background threads; the tray icon owns the main
-# thread (Windows requires GUI on main thread). pystray polls _state every
-# second to update the tooltip / menu text.
-
-def _make_icon_image(color: tuple[int, int, int]):
-    from PIL import Image, ImageDraw
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((4, 4, 60, 60), fill=color, outline=(0, 0, 0, 255), width=2)
-    return img
+# ─── GUI (Tkinter window, mirrors 1080's Electron UI) ───────────────────────
+# Worker logic runs in background threads; tk owns the main thread (required
+# on Windows). Closing the X button minimizes to taskbar, doesn't quit —
+# only File > Quit (or the "Quit worker" button) actually exits.
 
 def _format_uptime(seconds: float) -> str:
     s = int(seconds)
     h, rem = divmod(s, 3600)
     m, _ = divmod(rem, 60)
-    return f"{h}h{m:02d}m" if h else f"{m}m"
+    return f"{h}h {m:02d}m" if h else f"{m}m {s % 60:02d}s"
 
-def run_tray() -> None:
-    import pystray
+def _format_bytes(b: int) -> str:
+    if b < 1024:        return f"{b} B"
+    if b < 1024**2:     return f"{b/1024:.1f} KB"
+    if b < 1024**3:     return f"{b/1024**2:.1f} MB"
+    return f"{b/1024**3:.2f} GB"
+
+def run_gui() -> None:
+    import tkinter as tk
+    from tkinter import ttk
     import webbrowser
 
-    icon_idle    = _make_icon_image((46, 160, 67))   # green
-    icon_busy    = _make_icon_image((47, 129, 247))  # blue
-    icon_error   = _make_icon_image((218, 54, 51))   # red
-    icon_starting = _make_icon_image((158, 158, 158))  # grey
+    # Try to load NVML for GPU stats. If it fails, the GPU section just
+    # shows "unavailable" — worker still works without it.
+    nvml_handle = None
+    nvml_name = "(GPU stats unavailable)"
+    try:
+        import pynvml  # nvidia-ml-py installs this module name
+        pynvml.nvmlInit()
+        nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        nvml_name = pynvml.nvmlDeviceGetName(nvml_handle)
+        if isinstance(nvml_name, bytes):
+            nvml_name = nvml_name.decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"[gui] NVML unavailable: {e}", file=sys.stderr)
 
-    def status_line() -> str:
-        s = _state["status"]
-        cj = _state["current_job"]
-        if s == "working" and cj:
-            elapsed = int(time.time() - cj["started"])
-            return f"Working: {cj['model']} · job {cj['id'][:8]} · {elapsed}s"
-        if s == "idle":
-            return "Idle — waiting for jobs"
-        if s == "starting":
-            return "Starting..."
-        return f"Status: {s}"
+    root = tk.Tk()
+    root.title(f"GenShape3D Worker ({WORKER_ID})")
+    root.geometry("520x500")
+    root.minsize(480, 460)
 
-    def stats_line() -> str:
-        return f"Done: {_state['jobs_done']}  ·  Failed: {_state['jobs_failed']}  ·  Up: {_format_uptime(time.time() - _state['started_at'])}"
+    # Style
+    BG = "#0d1117"; FG = "#e6edf3"; MUTED = "#8b949e"
+    GREEN = "#3fb950"; BLUE = "#2f81f7"; RED = "#f85149"; AMBER = "#d29922"
+    root.configure(bg=BG)
+    style = ttk.Style()
+    try: style.theme_use("clam")
+    except Exception: pass
+    style.configure("TProgressbar", troughcolor="#21262d", background=BLUE, bordercolor=BG)
 
-    def on_dashboard(_icon, _item):
-        webbrowser.open("https://genshape3d.com/dashboard")
+    def lbl(parent, text, **kw):
+        kw.setdefault("fg", FG)
+        kw.setdefault("bg", BG)
+        return tk.Label(parent, text=text, **kw)
 
-    def on_open_log(_icon, _item):
+    # ── Header: status banner ─────────────────────────────────────────
+    header = tk.Frame(root, bg=BG); header.pack(fill="x", padx=16, pady=(14, 6))
+    status_dot = tk.Canvas(header, width=18, height=18, bg=BG, highlightthickness=0)
+    status_dot.pack(side="left")
+    dot_id = status_dot.create_oval(2, 2, 16, 16, fill=GREEN, outline="")
+    status_text = lbl(header, "Idle", font=("Segoe UI", 14, "bold"))
+    status_text.pack(side="left", padx=(8, 0))
+
+    detail_text = lbl(root, "Waiting for jobs", font=("Segoe UI", 9), fg=MUTED)
+    detail_text.pack(anchor="w", padx=18)
+
+    # ── GPU box ───────────────────────────────────────────────────────
+    gpu_frame = tk.LabelFrame(root, text=" GPU ", bg=BG, fg=FG, font=("Segoe UI", 9, "bold"),
+                              labelanchor="nw", padx=12, pady=10, bd=1, relief="solid")
+    gpu_frame.pack(fill="x", padx=14, pady=(12, 6))
+    gpu_name_lbl = lbl(gpu_frame, nvml_name, font=("Segoe UI", 10))
+    gpu_name_lbl.pack(anchor="w")
+
+    vram_row = tk.Frame(gpu_frame, bg=BG); vram_row.pack(fill="x", pady=(8, 2))
+    lbl(vram_row, "VRAM:", font=("Segoe UI", 9), fg=MUTED).pack(side="left")
+    vram_text = lbl(vram_row, "—", font=("Segoe UI", 10, "bold"))
+    vram_text.pack(side="left", padx=(6, 0))
+
+    vram_bar = ttk.Progressbar(gpu_frame, length=460, mode="determinate", maximum=100)
+    vram_bar.pack(fill="x", pady=(2, 8))
+
+    misc_row = tk.Frame(gpu_frame, bg=BG); misc_row.pack(fill="x")
+    util_text = lbl(misc_row, "GPU util: —", font=("Segoe UI", 9))
+    util_text.pack(side="left")
+    temp_text = lbl(misc_row, "Temp: —", font=("Segoe UI", 9))
+    temp_text.pack(side="left", padx=(20, 0))
+    power_text = lbl(misc_row, "Power: —", font=("Segoe UI", 9))
+    power_text.pack(side="left", padx=(20, 0))
+
+    # ── Current job ───────────────────────────────────────────────────
+    job_frame = tk.LabelFrame(root, text=" Current job ", bg=BG, fg=FG,
+                              font=("Segoe UI", 9, "bold"), labelanchor="nw",
+                              padx=12, pady=10, bd=1, relief="solid")
+    job_frame.pack(fill="x", padx=14, pady=6)
+    job_text = lbl(job_frame, "(none)", font=("Segoe UI", 10), fg=MUTED, justify="left")
+    job_text.pack(anchor="w")
+
+    # ── Counters + Models ─────────────────────────────────────────────
+    info_frame = tk.LabelFrame(root, text=" Worker ", bg=BG, fg=FG,
+                               font=("Segoe UI", 9, "bold"), labelanchor="nw",
+                               padx=12, pady=10, bd=1, relief="solid")
+    info_frame.pack(fill="x", padx=14, pady=6)
+    counters_text = lbl(info_frame, "Done: 0   Failed: 0   Up: 0m", font=("Segoe UI", 9))
+    counters_text.pack(anchor="w")
+    lbl(info_frame, f"Models: {', '.join(WORKER_MODELS)}",
+        font=("Segoe UI", 9), fg=MUTED).pack(anchor="w", pady=(4, 0))
+    lbl(info_frame, f"Worker ID: {WORKER_ID}   Capacity: {WORKER_CAPACITY}",
+        font=("Segoe UI", 9), fg=MUTED).pack(anchor="w")
+
+    # ── Buttons ───────────────────────────────────────────────────────
+    btn_row = tk.Frame(root, bg=BG); btn_row.pack(fill="x", padx=14, pady=(10, 14))
+
+    def open_dashboard(): webbrowser.open("https://genshape3d.com/dashboard")
+    def open_log():
         log_path = REPO_ROOT / "logs" / "worker.log"
-        if log_path.exists():
-            os.startfile(str(log_path))  # type: ignore[attr-defined]
-
-    def on_open_repo(_icon, _item):
-        os.startfile(str(REPO_ROOT))  # type: ignore[attr-defined]
-
-    def on_quit(icon, _item):
-        print("[worker] tray quit requested")
+        if log_path.exists(): os.startfile(str(log_path))  # type: ignore[attr-defined]
+    def open_folder(): os.startfile(str(REPO_ROOT))  # type: ignore[attr-defined]
+    def quit_worker():
         with _active_lock:
             for jp in list(_active_jobs.values()):
                 jp.cancel()
-        icon.stop()
-        # Force exit so background threads don't keep the process alive.
+        root.destroy()
         os._exit(0)
 
-    icon = pystray.Icon(
-        "genshape-worker-3090",
-        icon_idle,
-        f"GenShape3D Worker ({WORKER_ID})",
-        menu=pystray.Menu(
-            pystray.MenuItem(lambda _: status_line(), None, enabled=False),
-            pystray.MenuItem(lambda _: stats_line(), None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem(f"Models: {', '.join(WORKER_MODELS)}", None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Open dashboard", on_dashboard),
-            pystray.MenuItem("Open log file", on_open_log),
-            pystray.MenuItem("Open worker folder", on_open_repo),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Quit worker", on_quit),
-        ),
-    )
+    def mkbtn(text, cmd, color=BLUE):
+        return tk.Button(btn_row, text=text, command=cmd, bg=color, fg="white",
+                         activebackground=color, activeforeground="white",
+                         relief="flat", bd=0, padx=12, pady=6,
+                         font=("Segoe UI", 9), cursor="hand2")
+    mkbtn("Dashboard", open_dashboard).pack(side="left", padx=(0, 6))
+    mkbtn("Log file", open_log, "#21262d").pack(side="left", padx=6)
+    mkbtn("Folder",   open_folder, "#21262d").pack(side="left", padx=6)
+    mkbtn("Quit worker", quit_worker, RED).pack(side="right")
 
-    # Background updater: refreshes the tooltip + icon color every second.
-    def updater():
-        last_status = None
-        while True:
-            time.sleep(1)
-            try:
-                cj = _state["current_job"]
-                tip_status = status_line()
-                tip_stats  = stats_line()
-                icon.title = f"GenShape3D Worker ({WORKER_ID})\n{tip_status}\n{tip_stats}"
-                # Swap icon color on status change.
-                s = _state["status"]
-                if s != last_status:
-                    icon.icon = (
-                        icon_busy     if s == "working"
-                        else icon_idle     if s == "idle"
-                        else icon_starting
-                    )
-                    last_status = s
-            except Exception as e:
-                print(f"[tray] updater error: {e}", file=sys.stderr)
+    # X-button minimizes instead of quits (matches 1080's Electron behaviour).
+    root.protocol("WM_DELETE_WINDOW", root.iconify)
 
-    threading.Thread(target=updater, daemon=True).start()
-    icon.run()  # blocks main thread
+    # ── Refresh loop ──────────────────────────────────────────────────
+    def refresh():
+        try:
+            # GPU stats
+            if nvml_handle is not None:
+                try:
+                    mem = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
+                    util = pynvml.nvmlDeviceGetUtilizationRates(nvml_handle)
+                    temp = pynvml.nvmlDeviceGetTemperature(nvml_handle, pynvml.NVML_TEMPERATURE_GPU)
+                    try: power = pynvml.nvmlDeviceGetPowerUsage(nvml_handle) / 1000.0
+                    except Exception: power = None
+                    pct = (mem.used / mem.total) * 100 if mem.total else 0
+                    vram_text.config(text=f"{_format_bytes(mem.used)} / {_format_bytes(mem.total)}  ({pct:.1f}%)")
+                    vram_bar["value"] = pct
+                    util_text.config(text=f"GPU util: {util.gpu}%")
+                    temp_text.config(text=f"Temp: {temp}°C")
+                    if power is not None:
+                        power_text.config(text=f"Power: {power:.0f} W")
+                except Exception:
+                    pass
+
+            # Worker state
+            s = _state["status"]
+            cj = _state["current_job"]
+            if s == "working" and cj:
+                elapsed = int(time.time() - cj["started"])
+                status_text.config(text="Working")
+                detail_text.config(text=f"Running {cj['model']} · job {cj['id'][:12]}… · {elapsed}s elapsed")
+                status_dot.itemconfig(dot_id, fill=BLUE)
+            elif s == "idle":
+                status_text.config(text="Idle")
+                detail_text.config(text="Waiting for jobs from server")
+                status_dot.itemconfig(dot_id, fill=GREEN)
+            elif s == "starting":
+                status_text.config(text="Starting…")
+                detail_text.config(text="Registering with server")
+                status_dot.itemconfig(dot_id, fill=AMBER)
+            else:
+                status_text.config(text=s.capitalize())
+                status_dot.itemconfig(dot_id, fill=AMBER)
+
+            if cj:
+                started_str = time.strftime("%H:%M:%S", time.localtime(cj["started"]))
+                job_text.config(
+                    text=f"Job ID: {cj['id']}\nModel:  {cj['model']}\nStarted: {started_str}",
+                    fg=FG,
+                )
+            else:
+                job_text.config(text="(none)", fg=MUTED)
+
+            counters_text.config(text=(
+                f"Done: {_state['jobs_done']}   "
+                f"Failed: {_state['jobs_failed']}   "
+                f"Up: {_format_uptime(time.time() - _state['started_at'])}"
+            ))
+        except Exception as e:
+            print(f"[gui] refresh error: {e}", file=sys.stderr)
+        root.after(1000, refresh)
+
+    refresh()
+    root.mainloop()
 
 def main() -> None:
     if not WORKER_MODELS:
@@ -493,12 +584,11 @@ def main() -> None:
         register()
     except Exception as e:
         print(f"[worker] register failed: {e}", file=sys.stderr)
-        # Don't sys.exit — tray will still come up so the user can see what's wrong.
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=claim_loop_with_state, daemon=True).start()
-    print(f"[worker] background threads started; entering tray loop")
+    print(f"[worker] background threads started; entering GUI loop")
     try:
-        run_tray()
+        run_gui()
     except KeyboardInterrupt:
         print("[worker] interrupted; cancelling active jobs")
         with _active_lock:
