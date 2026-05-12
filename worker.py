@@ -334,7 +334,7 @@ def run_job(job: dict) -> None:
 # ─── Main loop: claim then run ───────────────────────────────────────────────
 def claim_loop() -> None:
     while True:
-        r = _post(f"/api/workers/{WORKER_ID}/claim", {}, timeout=40.0)
+        r = _post(f"/api/workers/{WORKER_ID}/claim", {}, timeout=20.0)
         if r is None:
             time.sleep(5)
             continue
@@ -898,9 +898,6 @@ def main() -> None:
         print(f"[worker] register failed: {e}", file=sys.stderr)
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=claim_loop_with_state, daemon=True).start()
-    # HTTP server for the monitor window. Auto-opens the browser tab so the
-    # user has visible UI immediately (tray-only was hard to find in Win11 overflow).
-    threading.Thread(target=run_ui_server, daemon=True).start()
     print(f"[worker] background threads started; entering tray loop")
     try:
         run_tray()
